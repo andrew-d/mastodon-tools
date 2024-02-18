@@ -1,0 +1,5 @@
+# Contains secrets
+*.prod.json
+
+# Executables
+/sync-blocks

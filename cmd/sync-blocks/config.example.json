@@ -1,0 +1,60 @@
+{
+    // The local instance to operate on.
+    "LocalInstance": "ottawa.place",
+
+    // The remote instances to scrape blocks from.
+    "RemoteInstances": ["mastodon.social", "mastodon.online"],
+
+    // The minimum number of remote instances that must have a domain blocked
+    // to apply that block locally.
+    "MinInstances": 1,
+
+    // Only ever Limit based on a remote block (i.e. never Suspend).
+    "OnlyLimit": true,
+
+    // A list of domains to never block.
+    "Exclusions": ["infosec.exchange"],
+
+    // The Mastodon application's client ID and client secret
+    "ClientID": "tktk",
+    "ClientSecret": "tktk",
+
+    // Authentication options; one of the following groups of options must be
+    // specified:
+    //    1. Code (generated out-of-band)
+    //    2. PromptCode
+    //    3. Username & Password
+    //    4. RefreshToken
+    "Auth": {
+        // An authentication token generated out-of-band.
+        //"Code": "TKTK",
+
+        // Prompt the user for a code when started.
+        "PromptCode": true,
+
+        // A Mastodon user's username and password.
+        //"Username": "foo",
+        //"Password": "hunter2",
+
+        // A refresh token (NOTE: untested).
+        //"RefreshToken": "TKTK",
+    },
+
+    // BlockOptions contains options for how the blocks are generated; we don't
+    // get full block details from a remote instance, so the user of this tool
+    // must make some additional choices.
+    "BlockOptions": {
+        // RejectMedia, if true, also rejects remote media from blocked
+        // instances. This is always true for Suspended instances.
+        "RejectMedia": true,
+        // RejectReports, if true, will reject reports from blocked instances.
+        // This is always true for Suspended instances.
+        "RejectReports": true,
+        // SetPublicComment, if true, will set the public comment to the joined
+        // version of public comments from all servers that blocked an instance.
+        "SetPublicComment": false,
+        // Obfuscate, if true, will obfuscate the blocked domain name on the local
+        // local instance's about page.
+        "Obfuscate": false,
+    },
+}
