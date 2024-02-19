@@ -19,10 +19,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/peterhellberg/link"
 	"github.com/tailscale/hujson"
 	xmaps "golang.org/x/exp/maps"
 
+	"github.com/andrew-d/mastodon-tools/helpers"
 	"github.com/andrew-d/mastodon-tools/types"
 )
 
@@ -148,29 +148,29 @@ func decodeSlice[T any](r io.Reader) ([]T, error) {
 	return ret, nil
 }
 
+func decodeSliceBytes[T any](b []byte) ([]T, error) {
+	var zero, ret []T
+	if err := json.Unmarshal(b, &ret); err != nil {
+		return zero, err
+	}
+	return ret, nil
+}
+
 func (c *Client) GetDomainBlocks(ctx context.Context) (ret []*types.AdminDomainBlock, _ error) {
-	url := c.url("/api/v1/admin/domain_blocks")
-	for {
-		resp, err := c.get(ctx, url)
-		if err != nil {
-			return nil, fmt.Errorf("GET %s: %w", url, err)
-		}
-
-		page, err := decodeSlice[*types.AdminDomainBlock](resp.Body)
-		resp.Body.Close()
-		if err != nil {
-			return nil, fmt.Errorf("decoding respone: %w", err)
-		}
-
-		ret = append(ret, page...)
-
-		lh := link.ParseResponse(resp)
-		if uu, ok := lh["next"]; ok {
-			url = uu.URI
-			dlogf("GetDomainBlocks: continuing to next page: %s", url)
-		} else {
-			break
-		}
+	err := helpers.Depaginate(
+		ctx,
+		c.url("/api/v1/admin/domain_blocks"),
+		c.get, // to fetch
+		func(body []byte) error {
+			page, err := decodeSliceBytes[*types.AdminDomainBlock](body)
+			if err != nil {
+				return err
+			}
+			ret = append(ret, page...)
+			return nil
+		})
+	if err != nil {
+		return nil, err
 	}
 	return ret, nil
 }
