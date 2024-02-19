@@ -155,7 +155,7 @@ func main() {
 	slices.SortFunc(ipBlocks, func(a, b ipBlock) int {
 		return netipx.ComparePrefix(a.Prefix, b.Prefix)
 	})
-	log.Printf("got %d ip blocks", len(ipBlocks))
+	log.Printf("the instance has %d IP blocks", len(ipBlocks))
 
 	// Segment into block managed by this tool and "others".
 	var ours, others []ipBlock
@@ -166,13 +166,14 @@ func main() {
 			others = append(others, block)
 		}
 	}
+	dlogf("found %d IP blocks that are managed by this tool, %d others", len(ours), len(others))
 
 	// Fetch all IPs to block from the remote
 	remoteIPs, err := getRemoteIPsToBlock(fetchCtx, httpc)
 	if err != nil {
 		log.Fatalf("error fetching IPs to block: %v", err)
 	}
-	log.Printf("got %d IPs to block", len(remoteIPs))
+	log.Printf("found %d remote IPs to block", len(remoteIPs))
 
 	// Remove all remote IPs that are covered by a rule that we're not
 	// managing; we just ignore those entirely.
@@ -194,7 +195,7 @@ func main() {
 
 		missing = append(missing, ip)
 	}
-	log.Printf("missing IP blocks for %d IPs", len(missing))
+	log.Printf("have %d remote IPs that aren't covered by other rules", len(missing))
 
 	// TODO: we should perform some sort of "route summarization" algorithm
 	// where we collapse adjacent IPs into a single prefix, rather than add
@@ -213,6 +214,7 @@ func main() {
 	}
 
 	// Okay, finally done; walk through our list of rules and remove/add things as necessary.
+	var added, removed int
 	_, err = helpers.Diff(ours, expected, func(block ipBlock) error {
 		if *remove {
 			return nil // do not add anything
@@ -227,7 +229,11 @@ func main() {
 		ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()
 
-		return addIPBlock(ctx, httpc, *domain, block.Prefix, block.Severity, block.Comment)
+		if err := addIPBlock(ctx, httpc, *domain, block.Prefix, block.Severity, block.Comment); err != nil {
+			return err
+		}
+		added++
+		return nil
 	}, func(block ipBlock) error {
 		existingBlock := blocksInfo[block]
 		log.Printf("deleting IP block: %v with ID %q", block, existingBlock.ID)
@@ -238,12 +244,16 @@ func main() {
 		// As above
 		ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()
-		return deleteIPBlock(ctx, httpc, *domain, existingBlock.ID)
+		if err := deleteIPBlock(ctx, httpc, *domain, existingBlock.ID); err != nil {
+			return err
+		}
+		removed++
+		return nil
 	})
 	if err != nil {
 		log.Fatalf("error modifying IP blocks: %v", err)
 	}
-	log.Printf("successfully synchronized IP blocks")
+	log.Printf("successfully synchronized IP blocks; added %d, removed %d", added, removed)
 }
 
 // getRemoteKey returns a unique key for a given netip.Prefix, used to help
