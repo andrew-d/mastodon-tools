@@ -32,20 +32,6 @@ var scopes = []string{
 	types.ScopeRead,
 }
 
-type bearerTransport struct {
-	domain string
-	token  string
-	inner  http.RoundTripper
-}
-
-func (b *bearerTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	if req.URL.Hostname() == b.domain {
-		req.Header.Add("Authorization", "Bearer "+b.token)
-	}
-	req.Header.Set("User-Agent", "sync-blocks/0.0.1")
-	return b.inner.RoundTrip(req)
-}
-
 type Client struct {
 	domain string
 	client *http.Client
@@ -111,10 +97,11 @@ func NewClient(ctx context.Context, domain, clientID, clientSecret string, opts 
 	ret := &Client{
 		domain: domain,
 		client: &http.Client{
-			Transport: &bearerTransport{
-				domain: domain,
-				token:  res.AccessToken,
-				inner:  http.DefaultTransport,
+			Transport: &helpers.MastodonTransport{
+				Domain:    domain,
+				Token:     res.AccessToken,
+				UserAgent: "sync-blocks/0.0.1",
+				Inner:     http.DefaultTransport,
 			},
 		},
 	}
