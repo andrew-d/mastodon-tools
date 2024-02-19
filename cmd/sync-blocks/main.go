@@ -162,16 +162,6 @@ func (c *Client) GetDomainBlocks(ctx context.Context) (ret []*types.AdminDomainB
 	return ret, nil
 }
 
-func getCodeURL(domain, clientID string) string {
-	params := url.Values{
-		"client_id":     {clientID},
-		"response_type": {"code"},
-		"redirect_uri":  {"urn:ietf:wg:oauth:2.0:oob"},
-		"scope":         {strings.Join(scopes, " ")},
-	}
-	return "https://" + domain + "/oauth/authorize?" + params.Encode()
-}
-
 func scrapeDomainBlocks(ctx context.Context, domain string) ([]*types.DomainBlock, error) {
 	url := "https://" + domain + "/api/v1/instance/domain_blocks"
 	resp, err := http.Get(url)
@@ -438,7 +428,11 @@ func makeClientOpts(config *Config) (*ClientOpts, error) {
 	}
 
 	// Start by asking the user to authenticate.
-	log.Printf("please visit the auth url: %s", getCodeURL(config.LocalInstance, config.ClientID))
+	log.Printf("please visit the auth url: %s", helpers.AuthCodeURL(
+		config.LocalInstance,
+		config.ClientID,
+		scopes,
+	))
 
 	fmt.Fprint(os.Stderr, "enter authentication code: ")
 	var authCode string
