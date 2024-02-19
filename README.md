@@ -73,3 +73,12 @@ $ curl \
 ```
 
 For more details, see: https://docs.joinmastodon.org/client/token/
+
+## Building this 
+
+You can either use [just](https://github.com/casey/just) and run `just`, or you can build the commands manually: 
+
+``` shellsession
+$ go build ./cmd/block-ips
+$ go build ./cmd/sync-blocks
+```
