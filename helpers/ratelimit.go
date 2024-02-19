@@ -7,11 +7,16 @@ import (
 	"time"
 )
 
+// Logf is the type of a common log.Printf-style log function.
+type Logf func(format string, args ...any)
+
 // RateLimit sleeps so that requests to Mastodon don't exceed the returned rate
 // limit, or until the provided context is cancelled. It will attempt to leave
 // at least 'buffer' requests in the rate limit so as not to lock the user out
 // of their account.
-func RateLimit(ctx context.Context, resp *http.Response, buffer int) error {
+//
+// If non-nil, the logf function will log whenever this rate limiter is waiting.
+func RateLimit(ctx context.Context, logf Logf, resp *http.Response, buffer int) error {
 	remaining, err := strconv.Atoi(resp.Header.Get("X-RateLimit-Remaining"))
 	if err != nil {
 		return nil // non-fatal
@@ -31,6 +36,10 @@ func RateLimit(ctx context.Context, resp *http.Response, buffer int) error {
 	dur := reset.Sub(time.Now())
 	timer := time.NewTimer(dur)
 	defer timer.Stop()
+
+	if logf != nil {
+		logf("waiting %s for ratelimit to reset", dur)
+	}
 	select {
 	case <-ctx.Done():
 		return ctx.Err()

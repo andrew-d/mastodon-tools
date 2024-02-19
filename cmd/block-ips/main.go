@@ -36,12 +36,20 @@ var (
 	domain       = flag.String("domain", "", "local domain")
 	clientID     = flag.String("client-id", "", "Mastodon client ID")
 	clientSecret = flag.String("client-secret", "", "Mastodon client secret")
-	prefix       = flag.String("prefix", "block-tor:", "prefix added to the comment on IP blocks to indicate that they're managed by this tool")
+	prefix       = flag.String("prefix", "ipblock:", "prefix added to the comment on IP blocks to indicate that they're managed by this tool")
+
+	// One of the following must be specified
+	remoteURL = flag.String("url", "", "a URL to a list of IP addresses to block")
+	file      = flag.String("file", "", "a file containing a list of IP addresses to block, one per line")
 )
 
 func main() {
 	flag.Parse()
 	log.SetOutput(os.Stderr)
+
+	if *remoteURL == "" && *file == "" {
+		log.Fatal("either --url or --file must be specified")
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -65,7 +73,7 @@ func main() {
 		Transport: &helpers.MastodonTransport{
 			Domain:    *domain,
 			Token:     token,
-			UserAgent: "block-tor/0.0.1",
+			UserAgent: "block-ips/0.0.1",
 			Inner:     http.DefaultTransport,
 		},
 	}
@@ -74,7 +82,7 @@ func main() {
 		log.Fatalf("error verifying credentials: %v", err)
 	}
 
-	// Fetching all data from our server and Tor shouldn't take more than about 10s
+	// Fetching all data from our server and the remote location shouldn't take more than about 10s
 	fetchCtx, fetchCancel := context.WithTimeout(ctx, 10*time.Second)
 	defer fetchCancel()
 
@@ -108,15 +116,15 @@ func main() {
 	//	1. Parse the blocks we just retrieved from the instance into Go
 	//	   netip.Prefix types, and segment them into blocks managed by
 	//	   this tool and blocks that are managed by something else.
-	//	2. Fetch all Tor exit nodes
-	//	3. Remove things from the list of Tor exit nodes that are
-	//	   covered by rules that aren't managed by us; this could be
-	//	   because a broader prefix has been blocked, or because the
-	//	   instance admin(s) want to provide more details in a comment,
-	//	   or whatever.
-	//	4. Given the list of actually-missing IP blocks for the Tor
-	//	   exit nodes, construct our expected set of blocks (in the
-	//	   same format as was generated in step #1).
+	//	2. Fetch all remote IPs.
+	//	3. Remove things from the list of remote IPs that are covered
+	//	   by rules that aren't managed by us; this could be because a
+	//	   broader prefix has been blocked, or because the instance
+	//	   admin(s) want to provide more details in a comment, or
+	//	   whatever.
+	//	4. Given the list of actually-missing IP blocks from our remote
+	//	   list, construct our expected set of blocks (in the same
+	//	   format as was generated in step #1).
 	//	5. Diff the two lists and add/remove from the instance as
 	//	   necessary to true everything up.
 
@@ -159,34 +167,34 @@ func main() {
 		}
 	}
 
-	// Fetch all Tor exit nodes; this shouldn't take more than about 10s
-	torNodes, err := getTorExitNodes(fetchCtx, httpc)
+	// Fetch all IPs to block from the remote
+	remoteIPs, err := getRemoteIPsToBlock(fetchCtx, httpc)
 	if err != nil {
-		log.Fatalf("error fetching Tor exit nodes: %v", err)
+		log.Fatalf("error fetching IPs to block: %v", err)
 	}
-	log.Printf("got %d Tor exit nodes", len(torNodes))
+	log.Printf("got %d IPs to block", len(remoteIPs))
 
-	// Remove all Tor exit nodes that are covered by a rule that we're not
+	// Remove all remote IPs that are covered by a rule that we're not
 	// managing; we just ignore those entirely.
 	//
 	// TODO: this is O(n^2); we could do something better
 	var missing []netip.Addr
-	for _, torNode := range torNodes {
+	for _, ip := range remoteIPs {
 		found := false
 		for _, block := range others {
-			if block.Prefix.Contains(torNode) {
+			if block.Prefix.Contains(ip) {
 				found = true
 				break
 			}
 		}
 		if found {
-			dlogf("already blocking IP: %v", torNode)
+			dlogf("already blocking IP: %v", ip)
 			continue
 		}
 
-		missing = append(missing, torNode)
+		missing = append(missing, ip)
 	}
-	log.Printf("missing IP blocks for %d Tor exit nodes", len(missing))
+	log.Printf("missing IP blocks for %d IPs", len(missing))
 
 	// TODO: we should perform some sort of "route summarization" algorithm
 	// where we collapse adjacent IPs into a single prefix, rather than add
@@ -197,11 +205,9 @@ func main() {
 	for _, ip := range missing {
 		pfx := netip.PrefixFrom(ip, 32)
 
-		// Generate a unique key for this record
-		hash := sha256.Sum256([]byte(fmt.Sprintf("%s", pfx)))
 		expected = append(expected, ipBlock{
 			Prefix:   pfx,
-			Comment:  *prefix + hex.EncodeToString(hash[:])[:16],
+			Comment:  *prefix + getRemoteKey(pfx),
 			Severity: types.IPBlockSeverityRequiresApproval, // TODO: configurable
 		})
 	}
@@ -240,23 +246,40 @@ func main() {
 	log.Printf("successfully synchronized IP blocks")
 }
 
-const ipListURL = "https://check.torproject.org/torbulkexitlist"
+// getRemoteKey returns a unique key for a given netip.Prefix, used to help
+// match given IPs across runs of this tool.
+func getRemoteKey(pfx netip.Prefix) string {
+	// TODO(andrew-d): should this hash anything other than the prefix?
+	// e.g. the source of the prefix?
+	key := fmt.Sprintf("%s\x00", pfx)
+	hash := sha256.Sum256([]byte(key))
+	return hex.EncodeToString(hash[:])[:16]
+}
 
-func getTorExitNodes(ctx context.Context, httpc *http.Client) ([]netip.Addr, error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", ipListURL, nil)
-	if err != nil {
-		return nil, fmt.Errorf("creating request: %w", err)
-	}
+func getRemoteIPsToBlock(ctx context.Context, httpc *http.Client) ([]netip.Addr, error) {
+	var body []byte
+	if *remoteURL != "" {
+		req, err := http.NewRequestWithContext(ctx, "GET", *remoteURL, nil)
+		if err != nil {
+			return nil, fmt.Errorf("creating request: %w", err)
+		}
 
-	resp, err := httpc.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("fetching Tor exit nodes: %w", err)
-	}
-	defer resp.Body.Close()
+		resp, err := httpc.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("fetching remote IPs: %w", err)
+		}
+		defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("reading response body: %w", err)
+		body, err = io.ReadAll(resp.Body)
+		if err != nil {
+			return nil, fmt.Errorf("reading response body: %w", err)
+		}
+	} else {
+		var err error
+		body, err = os.ReadFile(*file)
+		if err != nil {
+			return nil, fmt.Errorf("reading file: %w", err)
+		}
 	}
 
 	var ret []netip.Addr
@@ -268,11 +291,13 @@ func getTorExitNodes(ctx context.Context, httpc *http.Client) ([]netip.Addr, err
 	return ret, nil
 }
 
+const limitBuffer = 100 // never go below this many remaining requests
+
 func addIPBlock(ctx context.Context, httpc *http.Client, domain string, ip netip.Prefix, severity string, comment string) error {
 	params := url.Values{
 		"ip":         {ip.String()},
 		"severity":   {severity},
-		"comment":    {"TODO"},
+		"comment":    {comment},
 		"expires_in": {strconv.Itoa(3 * 31_536_000)}, // 3 years, ignoring leap years
 	}
 
@@ -288,7 +313,7 @@ func addIPBlock(ctx context.Context, httpc *http.Client, domain string, ip netip
 	defer resp.Body.Close()
 
 	// TODO: put in a better spot?
-	if err := helpers.RateLimit(ctx, resp, 50); err != nil {
+	if err := helpers.RateLimit(ctx, dlogf, resp, limitBuffer); err != nil {
 		return fmt.Errorf("waiting for rate limit: %w", err)
 	}
 
@@ -312,7 +337,7 @@ func deleteIPBlock(ctx context.Context, httpc *http.Client, domain, id string) e
 	defer resp.Body.Close()
 
 	// TODO: put in a better spot?
-	if err := helpers.RateLimit(ctx, resp, 50); err != nil {
+	if err := helpers.RateLimit(ctx, dlogf, resp, limitBuffer); err != nil {
 		return fmt.Errorf("waiting for rate limit: %w", err)
 	}
 
