@@ -2,4 +2,5 @@
 *.prod.json
 
 # Executables
+/block-tor
 /sync-blocks

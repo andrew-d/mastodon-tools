@@ -5,5 +5,6 @@ go 1.21.5
 require (
 	github.com/peterhellberg/link v1.2.0 // indirect
 	github.com/tailscale/hujson v0.0.0-20221223112325-20486734a56a // indirect
+	go4.org/netipx v0.0.0-20231129151722-fdeea329fbba // indirect
 	golang.org/x/exp v0.0.0-20240213143201-ec583247a57a // indirect
 )
