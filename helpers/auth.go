@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+
+	"github.com/andrew-d/mastodon-tools/types"
 )
 
 // GetBearerTokenOpts contains options for the GetBearerToken function.
@@ -105,4 +107,32 @@ func AuthCodeURL(domain, clientID string, scopes []string) string {
 		"scope":         {strings.Join(scopes, " ")},
 	}
 	return "https://" + domain + "/oauth/authorize?" + params.Encode()
+}
+
+// VerifyCredentials calls the /api/v1/accounts/verify_credentials endpoint and
+// verifies that it returns a valid response. This is helpful to ensure that
+// the credentials (which must be injected in the http.Client) are valid.
+func VerifyCredentials(ctx context.Context, httpc *http.Client, domain string) error {
+	req, err := http.NewRequestWithContext(ctx, "GET", "https://"+domain+"/api/v1/accounts/verify_credentials", nil)
+	if err != nil {
+		return err
+	}
+	resp, err := httpc.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("invalid status code: %d", resp.StatusCode)
+	}
+
+	var acct types.CredentialAccount
+	if err := json.NewDecoder(resp.Body).Decode(&acct); err != nil {
+		return err
+	}
+	if acct.ID == "" || acct.Username == "" {
+		return fmt.Errorf("unexpected empty ID or Username")
+	}
+
+	return nil
 }
